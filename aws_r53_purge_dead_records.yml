@@ -1,0 +1,17 @@
+---
+
+# ansible-playbook -i <dynamic-inventory-of-all-ec2s> aws_r53_purge_dead_records.yml -e "aws_profile=<aws-local-profile>"
+#
+# BEWARE: in order to effectively run this, the Ansible inventory needs to
+# contain ALL running EC2s
+# That way we can compare what is in R53 against what is current and running
+
+- hosts: all
+  become: False
+  gather_facts: False
+  roles:
+    - role: r53_purge_dead_records
+      # abc123xyz
+      tmp_zone_id: <aws-r53-hosted-zone-id>
+      # example.com
+      tmp_zone_name: <aws-r53-hosted-zone-name>

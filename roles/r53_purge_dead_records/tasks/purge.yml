@@ -1,0 +1,89 @@
+---
+
+- block:
+  - set_fact:
+      asg_records: []
+      delete_asg_records: []
+
+  # we want to make sure we only evaluate the records we care about
+  # for exmaple, i KNOW that records with the name "asg-*" are related to my
+  # autoscale groups and these nodes come and go as needed
+  - set_fact:
+      asg_records: "{{ asg_records + [ item.Name | regex_replace ('\\.$', '') ] }}"
+    when: |
+      item.Type == "A" and
+      item.Name | search("asg-")
+    with_items: "{{ r53_records.ResourceRecordSets }}"
+
+  # check to see if record is for a current, running node
+  # if not, add it to the delete list
+  - set_fact:
+      delete_asg_records: "{{ delete_asg_records + [ item ] }}"
+    when: |
+      item not in ansible_play_batch
+    with_items: "{{ asg_records }}"
+
+  # give me some output so i can determine whether or NOT i want to continue
+  - debug:
+      var: asg_records | length
+  - debug:
+      var: delete_asg_records | length
+  - debug:
+      msg: |
+        WE ARE KEEPING the below records
+  - debug:
+      var: asg_records | difference(delete_asg_records)
+
+  # giving you the change to BAIL if needed
+  - pause:
+
+  - name: delete the records !!
+    route53:
+      profile: "{{ aws_profile }}"
+      state: absent
+      zone: "{{ tmp_zone_name }}"
+      record: "{{ item.Name | regex_replace ('\\.$', '') }}"
+      value: "{{ item.ResourceRecords[0].Value }}"
+      type: "{{ item.Type }}"
+      ttl: "{{ item.TTL }}"
+    when: |
+      item.Name | regex_replace ('\\.$', '') in delete_asg_records
+    with_items: "{{ r53_records.ResourceRecordSets }}"
+  delegate_to: localhost
+  run_once: True
+
+# BELOW BLOCK calls back onto itself if there are MORE records to be processed
+# it figures this out because there is a define r53_records.NextRecordName
+# otherwise, it will continue onto the next ZONE
+- block:
+  - debug:
+      msg: |
+        NEXT RECORD DETAILS = {{ r53_records.NextRecordName }} / {{ r53_records.NextRecordType }}
+
+  # just so you can digest what is going on
+  - pause:
+
+  - name: get next ASG record sets
+    route53_facts:
+      profile: "{{ aws_profile }}"
+      query: record_sets
+      hosted_zone_id: "{{ tmp_zone_id }}"
+      type: "{{ r53_records.NextRecordType }}"
+      start_record_name: "{{ r53_records.NextRecordName }}"
+    register: r53_records
+
+  # call the PURGE yml again so we can continue evaluating the current hosted zone
+  - name: call the purge tasks for this next set
+    include_tasks: purge.yml
+  delegate_to: localhost
+  run_once: True
+  when: r53_records.NextRecordName is defined
+
+# BELOW BLOCK just lets you know you are done witht the zone
+- block:
+  - debug:
+      msg: |
+        DONE WITH ZONE = {{ tmp_zone_name }} / {{ tmp_zone_id }}
+  delegate_to: localhost
+  run_once: True
+  when: r53_records.NextRecordName is not defined

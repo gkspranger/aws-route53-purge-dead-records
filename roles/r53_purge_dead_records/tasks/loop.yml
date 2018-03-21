@@ -1,0 +1,20 @@
+---
+
+- block:
+  - debug:
+      msg: |
+        STARTING NEW ZONE to purge = {{ tmp_zone_name }} / {{ tmp_zone_id }}
+
+  - pause:
+
+  - name: get all 1st run of ASG nodes record sets
+    route53_facts:
+      profile: "{{ aws_profile }}"
+      query: record_sets
+      hosted_zone_id: "{{ tmp_zone_id }}"
+    register: r53_records
+
+  - name: call the purge tasks for this start set
+    include_tasks: purge.yml
+  delegate_to: localhost
+  run_once: True
